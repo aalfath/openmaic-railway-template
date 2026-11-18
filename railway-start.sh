@@ -29,6 +29,6 @@ if [ "$(id -u)" = "0" ]; then
   mkdir -p /app/data
   rmdir /app/data/lost+found 2>/dev/null || true
   chown -R nextjs:nodejs /app/data
-  exec su-exec nextjs:nodejs node server.js "$@"
+  exec setpriv --reuid=1001 --regid=1001 --init-groups node server.js "$@"
 fi
 exec node server.js "$@"

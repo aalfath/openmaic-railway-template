@@ -4,19 +4,21 @@
 # release from its pinned tag commit, following upstream's own Dockerfile
 # (v1.4.2) stage by stage. Differences from upstream's Dockerfile:
 #   - the source is fetched at a pinned commit instead of COPY . .
+#   - the official Node image's Debian (glibc) variant instead of Alpine, the
+#     libc upstream's CI builds and tests on
 #   - no BuildKit cache mounts (Railway's builder needs service-scoped cache ids)
 #   - a small start script that hands the Railway volume at /app/data to the
 #     app user, then runs the server as that user (uid 1001)
 # To update: bump OPENMAIC_VERSION and OPENMAIC_COMMIT together (and the Node
 # base if upstream's .nvmrc moves), and add a CHANGELOG.md entry.
 
-ARG NODE_IMAGE=node:22.23.5-alpine@sha256:1314fb30ec37592d5845e5a160d522c0e680972aa534549940b8d73bde88481a
+ARG NODE_IMAGE=node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee
 
 # ---- Source at the pinned release commit ----
 FROM ${NODE_IMAGE} AS source
 ARG OPENMAIC_VERSION=1.4.2
 ARG OPENMAIC_COMMIT=eb7c1bcccc3d083684c26ae1d5d187d41122cb10
-RUN apk add --no-cache git
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -r /var/lib/apt/lists/*
 WORKDIR /src
 RUN git init -q . \
  && git remote add origin https://github.com/THU-MAIC/OpenMAIC.git \
@@ -30,15 +32,12 @@ RUN git init -q . \
 
 # ---- Base ----
 FROM ${NODE_IMAGE} AS base
-RUN apk add --no-cache libc6-compat \
- && corepack enable \
+RUN corepack enable \
  && corepack prepare pnpm@10.28.0 --activate
 WORKDIR /app
 
 # ---- Dependencies ----
 FROM base AS deps
-# Native build tools for sharp, @napi-rs/canvas
-RUN apk add --no-cache python3 build-base g++ cairo-dev pango-dev jpeg-dev giflib-dev librsvg-dev
 COPY --from=source /src/package.json /src/pnpm-lock.yaml /src/pnpm-workspace.yaml ./
 COPY --from=source /src/packages/ ./packages/
 COPY --from=source /src/scripts/ ./scripts/
@@ -58,9 +57,11 @@ WORKDIR /app
 ENV NODE_ENV=production \
     HOSTNAME=0.0.0.0 \
     PORT=3000
-RUN apk add --no-cache libc6-compat cairo pango jpeg giflib librsvg su-exec \
- && addgroup --system --gid 1001 nodejs \
- && adduser --system --uid 1001 nextjs
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends libcairo2 libpango-1.0-0 libpangocairo-1.0-0 libjpeg62-turbo libgif7 librsvg2-2 ca-certificates \
+ && rm -r /var/lib/apt/lists/* \
+ && groupadd --system --gid 1001 nodejs \
+ && useradd --system --uid 1001 --gid nodejs --no-create-home --home-dir /app nextjs
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
